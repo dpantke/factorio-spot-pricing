@@ -58,6 +58,14 @@ Parameters:
     - true
     - false
 
+  EnableIPv6:
+    Type: String
+    Description: Enables IPv6 on the VPC and subnets. IPv6 is very advanteagous for remote access to avoid scanners.
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -105,7 +113,8 @@ Conditions:
   DnsConfigEnabled: !And [ !Not [ !Equals [ !Ref HostedZoneId, '' ] ], !Not [ !Equals [ !Ref RecordName, '' ] ] ]
   SpotPriceProvided: !Not [ !Equals [ !Ref SpotPrice, '' ] ]
   DoEnableRcon: !Equals [ !Ref EnableRcon, 'true' ]
-
+  DoEnableIPv6: !Equals [ !Ref EnableIPv6, 'true' ]
+  IPv4Only: !Equals [ !Ref EnableIPv6, 'false' ]
 
 Mappings:
   ServerState:
@@ -127,30 +136,64 @@ Resources:
       EnableDnsSupport: true
       EnableDnsHostnames: true
 
+  IPv6Block:
+    Type: AWS::EC2::VPCCidrBlock
+    Condition: DoEnableIPv6
+    Properties: 
+      AmazonProvidedIpv6CidrBlock: true
+      VpcId: !Ref Vpc
+
   SubnetA:
     Type: AWS::EC2::Subnet
+    Condition: IPv4Only
     Properties:
       AvailabilityZone: !Select 
       - 0
       - !GetAZs 
         Ref: 'AWS::Region'
       CidrBlock: !Select [ 0, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
-      VpcId: !Ref Vpc  
+      VpcId: !Ref Vpc
+
+  IPv6SubnetA:
+    Type: AWS::EC2::Subnet
+    Condition: DoEnableIPv6
+    DependsOn:
+      - IPv6Block
+    Properties:
+      AvailabilityZone: !Select 
+      - 0
+      - !GetAZs 
+        Ref: 'AWS::Region'
+      CidrBlock: !Select [ 0, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
+      Ipv6CidrBlock: 
+        Fn::Sub:
+          - "${VpcPart}${SubnetPart}"
+          - SubnetPart: 2a::/64
+            VpcPart: !Select [0, !Split ['00::/56', !Select [0,!GetAtt Vpc.Ipv6CidrBlocks]]]
+      VpcId: !Ref Vpc
+      AssignIpv6AddressOnCreation: true
 
   SubnetARoute:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: 
       RouteTableId: !Ref RouteTable
-      SubnetId: !Ref SubnetA
+      SubnetId: !If
+        - DoEnableIPv6
+        - !Ref IPv6SubnetA
+        - !Ref SubnetA
 
   SubnetBRoute:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: 
       RouteTableId: !Ref RouteTable
-      SubnetId: !Ref SubnetB  
+      SubnetId: !If
+        - DoEnableIPv6
+        - !Ref IPv6SubnetB
+        - !Ref SubnetB  
 
   SubnetB:
     Type: AWS::EC2::Subnet
+    Condition: IPv4Only
     Properties:
       AvailabilityZone: !Select 
       - 1
@@ -158,6 +201,25 @@ Resources:
         Ref: 'AWS::Region'
       CidrBlock: !Select [ 1, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
       VpcId: !Ref Vpc
+
+  IPv6SubnetB:
+    Type: AWS::EC2::Subnet
+    Condition: DoEnableIPv6
+    DependsOn:
+      - IPv6Block
+    Properties:
+      AvailabilityZone: !Select 
+      - 1
+      - !GetAZs 
+        Ref: 'AWS::Region'
+      CidrBlock: !Select [ 1, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
+      Ipv6CidrBlock: 
+        Fn::Sub:
+          - "${VpcPart}${SubnetPart}"
+          - SubnetPart: 9c::/64
+            VpcPart: !Select [0, !Split ['00::/56', !Select [0,!GetAtt Vpc.Ipv6CidrBlocks]]]
+      VpcId: !Ref Vpc
+      AssignIpv6AddressOnCreation: true
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -181,6 +243,14 @@ Resources:
       GatewayId: !Ref InternetGateway
       RouteTableId: !Ref RouteTable
 
+  IPv6Route:
+    Type: AWS::EC2::Route
+    Condition: DoEnableIPv6
+    Properties:
+      DestinationIpv6CidrBlock: ::/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref RouteTable
+
   # ====================================================
   # EFS FOR PERSISTENT DATA
   # ====================================================
@@ -195,7 +265,10 @@ Resources:
       FileSystemId: !Ref Efs
       SecurityGroups:
       - !Ref EfsSg
-      SubnetId: !Ref SubnetA
+      SubnetId: !If
+        - DoEnableIPv6
+        - !Ref IPv6SubnetA
+        - !Ref SubnetA
 
   MountB:
     Type: AWS::EFS::MountTarget
@@ -203,7 +276,10 @@ Resources:
       FileSystemId: !Ref Efs
       SecurityGroups:
       - !Ref EfsSg
-      SubnetId: !Ref SubnetB
+      SubnetId: !If
+        - DoEnableIPv6
+        - !Ref IPv6SubnetB
+        - !Ref SubnetB
 
   EfsSg:
     Type: AWS::EC2::SecurityGroup
@@ -238,6 +314,10 @@ Resources:
         ToPort: 34197
         IpProtocol: udp
         CidrIp: 0.0.0.0/0
+      - FromPort: 34197
+        ToPort: 34197
+        IpProtocol: udp
+        CidrIpv6: ::/0
       - !If
         - DoEnableRcon
         - FromPort: 27015
@@ -280,8 +360,14 @@ Resources:
       MaxSize: !FindInMap [ ServerState, !Ref ServerState, DesiredCapacity ]
       MinSize: !FindInMap [ ServerState, !Ref ServerState, DesiredCapacity ]
       VPCZoneIdentifier:
-        - !Ref SubnetA
-        - !Ref SubnetB
+        - !If
+          - DoEnableIPv6
+          - !Ref IPv6SubnetA
+          - !Ref SubnetA
+        - !If
+          - DoEnableIPv6
+          - !Ref IPv6SubnetB
+          - !Ref SubnetB
 
   InstanceRole:
     Type: AWS::IAM::Role
