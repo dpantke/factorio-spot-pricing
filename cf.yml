@@ -109,12 +109,15 @@ Metadata:
 
 Conditions:
   KeyPairNameProvided: !Not [ !Equals [ !Ref KeyPairName, '' ] ]
-  IpAddressProvided: !Not [ !Equals [ !Ref YourIp, '' ] ]
   DnsConfigEnabled: !And [ !Not [ !Equals [ !Ref HostedZoneId, '' ] ], !Not [ !Equals [ !Ref RecordName, '' ] ] ]
   SpotPriceProvided: !Not [ !Equals [ !Ref SpotPrice, '' ] ]
   DoEnableRcon: !Equals [ !Ref EnableRcon, 'true' ]
   DoEnableIPv6: !Equals [ !Ref EnableIPv6, 'true' ]
   IPv4Only: !Equals [ !Ref EnableIPv6, 'false' ]
+  AddressProvided: !Not [ !Equals [ !Ref YourIp, '' ] ]
+  IPv4AddressProvided: !And [ !Condition AddressProvided, !Condition IPv4Only ]
+  IPv6AddressProvided: !And [ !Condition AddressProvided, !Condition DoEnableIPv6 ]
+  DoEnableRconIPv6: !And [ !Condition DoEnableRcon, !Condition DoEnableIPv6 ]
 
 Mappings:
   ServerState:
@@ -151,7 +154,7 @@ Resources:
       - 0
       - !GetAZs 
         Ref: 'AWS::Region'
-      CidrBlock: !Select [ 0, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
+      CidrBlock: !Select [ 2, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
       VpcId: !Ref Vpc
 
   IPv6SubnetA:
@@ -199,7 +202,7 @@ Resources:
       - 1
       - !GetAZs 
         Ref: 'AWS::Region'
-      CidrBlock: !Select [ 1, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
+      CidrBlock: !Select [ 3, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
       VpcId: !Ref Vpc
 
   IPv6SubnetB:
@@ -303,29 +306,67 @@ Resources:
       GroupName: !Sub "${AWS::StackName}-ec2"
       GroupDescription: !Sub "${AWS::StackName}-ec2"
       SecurityGroupIngress:
-      - !If
-        - IpAddressProvided 
-        - FromPort: 22
-          ToPort: 22
-          IpProtocol: tcp
-          CidrIp: !Sub "${YourIp}/32"
-        - !Ref 'AWS::NoValue'
       - FromPort: 34197
         ToPort: 34197
         IpProtocol: udp
         CidrIp: 0.0.0.0/0
-      - FromPort: 34197
-        ToPort: 34197
-        IpProtocol: udp
-        CidrIpv6: ::/0
-      - !If
-        - DoEnableRcon
-        - FromPort: 27015
-          ToPort: 27015
-          IpProtocol: tcp
-          CidrIp: 0.0.0.0/0
-        - !Ref 'AWS::NoValue'
       VpcId: !Ref Vpc
+
+  AllowFactorioIpv6SGRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: DoEnableIPv6
+    Properties: 
+      CidrIpv6: ::/0
+      Description: Allows incoming RCON connections over IPv6
+      FromPort: 34197
+      ToPort: 34197
+      GroupId: !Ref Ec2Sg
+      IpProtocol: udp
+
+  
+  RconIpv6SGRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: DoEnableRconIPv6
+    Properties: 
+      CidrIpv6: ::/0
+      Description: Allows incoming RCON connections over IPv6
+      FromPort: 27015
+      ToPort: 27015
+      GroupId: !Ref Ec2Sg
+      IpProtocol: tcp
+
+  RconSGRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: DoEnableRcon
+    Properties: 
+      CidrIp: 0.0.0.0/0
+      Description: Allows incoming RCON connections
+      FromPort: 27015
+      ToPort: 27015
+      GroupId: !Ref Ec2Sg
+      IpProtocol: tcp
+
+  IPv6SSHSecGroupRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: IPv6AddressProvided
+    Properties: 
+      CidrIpv6: !Sub "${YourIp}/128"
+      Description: Allows SSH admin access to the target IPv6 address.
+      FromPort: 22
+      ToPort: 22
+      GroupId: !Ref Ec2Sg
+      IpProtocol: tcp
+
+  IPv4SSHSecGroupRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: IPv4AddressProvided
+    Properties: 
+      CidrIp: !Sub "${YourIp}/32"
+      Description: Allows SSH admin access to the target IPv4 address.
+      FromPort: 22
+      ToPort: 22
+      GroupId: !Ref Ec2Sg
+      IpProtocol: tcp
 
   LaunchConfiguration:
     Type: AWS::AutoScaling::LaunchConfiguration
