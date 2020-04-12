@@ -482,25 +482,39 @@ Resources:
           import os
           def handler(event, context):
             new_instance = boto3.resource('ec2').Instance(event['detail']['EC2InstanceId'])
+            changes = []
+            changes.append({
+              'Action': 'UPSERT',
+              'ResourceRecordSet': {
+                'Name': os.environ['RecordName'],
+                'Type': 'A',
+                'TTL': 60,
+                'ResourceRecords': [
+                  {
+                      'Value': new_instance.public_ip_address
+                  },
+                ]
+              }
+            })
+            if new_instance.network_interfaces_attribute[0]['Ipv6Addresses']:
+              changes.append({
+                'Action': 'UPSERT',
+                'ResourceRecordSet': {
+                  'Name': os.environ['RecordName'],
+                  'Type': 'AAAA',
+                  'TTL': 60,
+                  'ResourceRecords': [
+                    {
+                      'Value': new_instance.network_interfaces_attribute[0]['Ipv6Addresses'][0]['Ipv6Address']
+                    },
+                  ]
+                }
+              })
             boto3.client('route53').change_resource_record_sets(
               HostedZoneId= os.environ['HostedZoneId'],
               ChangeBatch={
                   'Comment': 'updating',
-                  'Changes': [
-                      {
-                          'Action': 'UPSERT',
-                          'ResourceRecordSet': {
-                              'Name': os.environ['RecordName'],
-                              'Type': 'A',
-                              'TTL': 60,
-                              'ResourceRecords': [
-                                  {
-                                      'Value': new_instance.public_ip_address
-                                  },
-                              ]
-                          }
-                      },
-                  ]
+                  'Changes': changes
               })
       Description: Sets Route 53 DNS Record for Factorio
       FunctionName: !Sub "${AWS::StackName}-set-dns"
