@@ -53,6 +53,11 @@ If you're creating a new Factorio deployment, provide these parameters when crea
 
 Every time your Factorio server starts it'll have a new public IP address. This can be a pain to keep dishing out to your friends. If you're prepared to register a domain name (maybe you've already got one) and create a Route 53 hosted zone, this problem is easily fixed. You'll need to provide both of the parameters under the DNS Configuration (Optional) section. Whenever your instance is launched, a Lambda function fires off and creates / updates the record of your choosing. This way, you can have a custom domain name such as "factorio.mydomain.com". Note that it may take a few minutes for the new IP to propagate to your friends computers. Have patience. Failing that just go to the EC2 console, and give them the new public IP address of your instance.
 
+### IPv6
+
+This template includes support for IPv6 by turning on the optional IPv6 flag. When running with IPv6 enalbed, the instance will run with both an IPv4 and IPv6 address. When using IPv6 support, the admin server IP parameter switches from being IPv4 to IPv6, as if you are running dual-stack it is far, far more secure to only connect over SSH using IPv6 ( the instance's IPv6 address is incredibly harder to scan for than the IPv4 address. )
+
+
 ## FAQ
 
 **Do I need a VPC, or Subnets, or other networking config in AWS?** 
